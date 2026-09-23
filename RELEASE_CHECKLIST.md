@@ -14,11 +14,12 @@
 - [x] Confirm the base and Jev-only imports do not load Torch or Laya; Laya mock scoring works without `TYPESAFE_API_KEY`; Laya HTTP mock scoring works without local Torch or Laya.
 - [x] Confirm the current local benchmark report includes only measurements actually collected by TypedRank.
 
-## Required before publishing
+## Release outcome
 
-- [ ] Create or confirm the GitHub repository at `https://github.com/kashyaprparmar/typedrank`. There is no Git remote configured in this checkout, and the README project links currently return 404 because the repository is not available yet.
-- [ ] Review the intended release version and changelog entry after repository creation.
-- [ ] Run opt-in Jev or Laya live checks only when service credentials, service availability, and any provider charges are acceptable.
-- [ ] Have a maintainer review the release candidate and then publish the package or GitHub release manually.
+- [x] Create the public GitHub repository at `https://github.com/kashyaprparmar/typedrank` and push `main`.
+- [x] Confirm the GitHub Actions matrix passes on Ubuntu and Windows with Python 3.11 and 3.13.
+- [x] Review version `0.1.0` and the changelog entry.
+- [x] Upload the wheel and source archive to PyPI as `typedrank==0.1.0` and install the published version in a clean environment.
+- [ ] Optional live Jev and Laya checks remain skipped; their CI cases require provider credentials, an HTTP service, or downloading local model weights.
 
-No PyPI publication or GitHub release was performed during this cleanup.
+No GitHub Release was created. The PyPI publication was explicitly requested and completed.
