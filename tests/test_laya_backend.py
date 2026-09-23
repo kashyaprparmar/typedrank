@@ -20,6 +20,7 @@ class RouterDouble:
         self.delay = delay
         self.malformed = malformed
         self.models: list[str | None] = []
+        self.route_states: list[Any] = []
         self.active = 0
         self.maximum_active = 0
         self._lock = threading.Lock()
@@ -34,7 +35,12 @@ class RouterDouble:
         lang_guess: str | None = None,
     ) -> dict[str, str]:
         del questions, lang_guess
-        checkpoint = model or ("multilingual" if lang == "hi" else "english")
+        self.route_states.append(state)
+        checkpoint = model or (
+            "multilingual"
+            if lang == "hi" or (isinstance(state, str) and "हिंदी" in state)
+            else "english"
+        )
         return {"model": checkpoint, "reason": f"language={lang}"}
 
     def predict(
@@ -72,13 +78,14 @@ def _request() -> ModelRequest:
 @pytest.mark.asyncio
 async def test_local_stage_pins_multilingual_checkpoint_and_provenance() -> None:
     fake = RouterDouble()
-    backend = LayaBackend(router=fake)
+    backend = LayaBackend(context_policy="allow_provider_truncation", router=fake)
     response = await Reranker(backend=backend).rerank(
         query="hello",
         candidates=["one", "two"],
         context=RerankContext(language="hi"),
     )
     assert fake.models == ["multilingual"]
+    assert fake.route_states[0]["candidates"] == ["one", "two"]
     assert response.statistics.selected_backend == "laya-local"
     assert response.statistics.resolved_model == "multilingual"
     assert response.statistics.backend_metadata["routing"]["model"] == "multilingual"
@@ -92,7 +99,9 @@ async def test_local_stage_pins_multilingual_checkpoint_and_provenance() -> None
 @pytest.mark.asyncio
 async def test_explicit_checkpoint_and_zero_provider_budget() -> None:
     fake = RouterDouble()
-    backend = LayaBackend(model="typed-decisions", router=fake)
+    backend = LayaBackend(
+        model="typed-decisions", context_policy="allow_provider_truncation", router=fake
+    )
     result = await Reranker(backend=backend).rerank(
         query="choose",
         candidates=["one"],
@@ -105,8 +114,24 @@ async def test_explicit_checkpoint_and_zero_provider_budget() -> None:
 
 
 @pytest.mark.asyncio
+async def test_auto_route_checks_multilingual_survivor_separately() -> None:
+    fake = RouterDouble()
+    backend = LayaBackend(context_policy="allow_provider_truncation", router=fake)
+    response = await Reranker(backend=backend).rerank(
+        query="best database", candidates=["ordinary English text", "हिंदी दस्तावेज़"]
+    )
+    assert response.statistics.resolved_model == "multilingual"
+    assert response.statistics.backend_metadata["stage_routing"]["reason"] == (
+        "multilingual survivor in candidate pool"
+    )
+    await backend.aclose()
+
+
+@pytest.mark.asyncio
 async def test_local_rejects_missing_id() -> None:
-    backend = LayaBackend(router=RouterDouble(malformed=True))
+    backend = LayaBackend(
+        context_policy="allow_provider_truncation", router=RouterDouble(malformed=True)
+    )
     with pytest.raises(OutputValidationError):
         await backend.score(_request())
     await backend.aclose()
@@ -115,7 +140,7 @@ async def test_local_rejects_missing_id() -> None:
 @pytest.mark.asyncio
 async def test_local_worker_does_not_block_loop_and_serializes_by_default() -> None:
     fake = RouterDouble(delay=0.06)
-    backend = LayaBackend(router=fake)
+    backend = LayaBackend(context_policy="allow_provider_truncation", router=fake)
     ticked = False
 
     async def ticker() -> None:
@@ -132,7 +157,7 @@ async def test_local_worker_does_not_block_loop_and_serializes_by_default() -> N
 @pytest.mark.asyncio
 async def test_cancelled_local_call_waits_for_worker_cleanup() -> None:
     fake = RouterDouble(delay=0.05)
-    backend = LayaBackend(router=fake)
+    backend = LayaBackend(context_policy="allow_provider_truncation", router=fake)
     started = time.perf_counter()
     task = asyncio.create_task(backend.score(_request()))
     await asyncio.sleep(0.01)
@@ -147,7 +172,9 @@ async def test_cancelled_local_call_waits_for_worker_cleanup() -> None:
 @pytest.mark.asyncio
 async def test_local_context_limit_rejects_before_inference() -> None:
     fake = RouterDouble()
-    backend = LayaBackend(router=fake, max_context_tokens=32)
+    backend = LayaBackend(
+        context_policy="allow_provider_truncation", router=fake, max_context_tokens=32
+    )
     with pytest.raises(ContextLimitError):
         await backend.score(_request())
     assert not fake.models
@@ -165,7 +192,7 @@ async def test_missing_dependency_is_actionable(monkeypatch: pytest.MonkeyPatch)
 
 @pytest.mark.asyncio
 async def test_closed_local_backend_rejects_work() -> None:
-    backend = LayaBackend(router=RouterDouble())
+    backend = LayaBackend(context_policy="allow_provider_truncation", router=RouterDouble())
     await backend.aclose()
     with pytest.raises(BackendError, match="closed"):
         await backend.score(_request())
@@ -174,6 +201,8 @@ async def test_closed_local_backend_rejects_work() -> None:
 def test_local_model_validation() -> None:
     with pytest.raises(ValueError):
         LayaBackend(max_inference_concurrency=0)
+    with pytest.raises(ValueError, match="one inference worker"):
+        LayaBackend(max_inference_concurrency=2)
     assert LayaBackend().capabilities.execution_location == "local"
     assert (
         LayaBackend(model="english").cache_identity
@@ -184,9 +213,28 @@ def test_local_model_validation() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cancelled_close_still_unloads_router() -> None:
+    fake = RouterDouble(delay=0.08)
+    backend = LayaBackend(context_policy="allow_provider_truncation", router=fake)
+    task = asyncio.create_task(backend.score(_request()))
+    await asyncio.sleep(0.01)
+    close = asyncio.create_task(backend.aclose())
+    await asyncio.sleep(0.01)
+    close.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await close
+    await task
+    await backend.aclose()
+    assert fake.unloaded
+    assert backend.router is None
+
+
+@pytest.mark.asyncio
 async def test_local_cache_requires_declared_weight_revision() -> None:
     fake = RouterDouble()
-    backend = LayaBackend(router=fake, cache_revision="weights-v1")
+    backend = LayaBackend(
+        context_policy="allow_provider_truncation", router=fake, cache_revision="weights-v1"
+    )
     ranker = Reranker(
         backend=backend,
         config=RerankerConfig(cache=CacheConfig(enabled=True)),
@@ -202,7 +250,7 @@ async def test_local_cache_requires_declared_weight_revision() -> None:
 @pytest.mark.asyncio
 async def test_concurrent_reranks_share_one_local_router() -> None:
     fake = RouterDouble(delay=0.02)
-    backend = LayaBackend(router=fake)
+    backend = LayaBackend(context_policy="allow_provider_truncation", router=fake)
     ranker = Reranker(backend=backend)
     one, two = await asyncio.gather(
         ranker.rerank(query="first", candidates=["a", "b"]),

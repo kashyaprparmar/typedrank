@@ -39,6 +39,8 @@ class ListwiseStrategy:
             )
         entries: list[RankingEntry] = []
         warnings: list[str] = []
+        approximate = False
+        missing_count = 0
         for start in range(0, len(candidates), size):
             batch = candidates[start : start + size]
             outcome = await services.model_scores(
@@ -49,6 +51,8 @@ class ListwiseStrategy:
             )
             entries.extend(outcome.entries)
             warnings.extend(outcome.warnings)
+            approximate |= outcome.approximate
+            missing_count += outcome.missing_count
         index = {candidate.occurrence_id: candidate.input_index for candidate in candidates}
         entries.sort(
             key=lambda entry: (
@@ -64,4 +68,6 @@ class ListwiseStrategy:
             len(candidates),
             len(entries),
         )
-        return RankingOutcome(tuple(entries), ScoreKind.UTILITY, False, tuple(warnings), (stage,))
+        return RankingOutcome(
+            tuple(entries), ScoreKind.UTILITY, approximate, tuple(warnings), (stage,), missing_count
+        )

@@ -7,10 +7,10 @@ import json
 import math
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
-from typing import Any, cast
+from dataclasses import dataclass, field, replace
+from typing import Any, Literal, cast
 
 from ..errors import (
     AuthenticationError,
@@ -23,6 +23,7 @@ from ..errors import (
 )
 from .base import BackendCapabilities, ModelRequest, ModelResponse
 from .jev import JevBackend, JevHttpResponse
+from .laya_context import validate_local_context
 from .systemone import decode_relevance, relevance_payload
 
 
@@ -43,10 +44,12 @@ class LayaBackend:
     max_batch_size: int = 16
     max_context_tokens: int = 512
     cache_revision: str | None = None
+    context_policy: Literal["strict", "allow_provider_truncation"] = "strict"
     router: Any | None = field(default=None, repr=False)
     _executor: ThreadPoolExecutor | None = field(default=None, init=False, repr=False)
     _semaphore: asyncio.Semaphore | None = field(default=None, init=False, repr=False)
     _closed: bool = field(default=False, init=False, repr=False)
+    _close_task: asyncio.Task[None] | None = field(default=None, init=False, repr=False)
     _router_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -62,6 +65,10 @@ class LayaBackend:
             raise ValueError("Laya concurrency, batch, and context limits must be positive")
         if not self.model:
             raise ValueError("Laya model cannot be empty")
+        if self.max_inference_concurrency != 1:
+            raise ValueError("Laya 0.3.7 supports one inference worker per Router")
+        if self.context_policy not in {"strict", "allow_provider_truncation"}:
+            raise ValueError("unknown Laya context policy")
         if self.cache_revision is not None and not self.cache_revision.strip():
             raise ValueError("cache_revision cannot be empty")
 
@@ -143,6 +150,8 @@ class LayaBackend:
         if self._semaphore is None:
             self._semaphore = asyncio.Semaphore(self.max_inference_concurrency)
         async with self._semaphore:
+            if self._closed:
+                raise BackendError("Laya backend is closed")
             loop = asyncio.get_running_loop()
             future = loop.run_in_executor(self._executor, lambda: fn(*args, **kwargs))
             try:
@@ -156,22 +165,34 @@ class LayaBackend:
                     pass
                 raise
 
-    def _route(self, query: str, language: str | None) -> Mapping[str, Any]:
+    def _route(
+        self, query: str, language: str | None, candidate_texts: Sequence[str]
+    ) -> Mapping[str, Any]:
         router = self._get_router()
+        state = {"query": query, "candidates": list(candidate_texts)}
         if self.model != "auto":
-            decision = router.route({"USER QUERY": query}, {}, model=self.model)
+            decision = router.route(state, {}, model=self.model)
         else:
-            decision = router.route(
-                {"USER QUERY": query}, {}, lang=language, lang_guess=self.lang_guess
-            )
+            decision = router.route(state, {}, lang=language, lang_guess=self.lang_guess)
+            if language is None and candidate_texts and decision.get("model") == "english":
+                for candidate_text in candidate_texts:
+                    candidate_route = router.route(candidate_text, {}, lang_guess=self.lang_guess)
+                    if candidate_route.get("model") == "multilingual":
+                        decision = dict(router.route(state, {}, model="multilingual"))
+                        decision["reason"] = "multilingual survivor in candidate pool"
+                        break
         if not isinstance(decision, Mapping) or not isinstance(decision.get("model"), str):
             raise OutputValidationError("Laya Router returned an invalid route")
         return decision
 
-    async def prepare_stage(self, query: str, language: str | None = None) -> Mapping[str, Any]:
+    async def prepare_stage(
+        self, query: str, language: str | None = None, candidate_texts: Sequence[str] = ()
+    ) -> Mapping[str, Any]:
         """Pin one checkpoint before pointwise calls to avoid mixed-model scores."""
         try:
-            return cast(Mapping[str, Any], await self._worker(self._route, query, language))
+            return cast(
+                Mapping[str, Any], await self._worker(self._route, query, language, candidate_texts)
+            )
         except (CapabilityError, OutputValidationError):
             raise
         except Exception as exc:
@@ -179,6 +200,10 @@ class LayaBackend:
 
     def _predict(self, state: Any, questions: Any, checkpoint: str | None) -> Mapping[str, Any]:
         router = self._get_router()
+        if self.context_policy == "strict":
+            if checkpoint is None:
+                raise CapabilityError("strict Laya scoring requires a pinned checkpoint")
+            validate_local_context(router, state, questions, checkpoint, self.max_context_tokens)
         result = router.predict(state, questions, model=checkpoint)
         if not isinstance(result, Mapping):
             raise OutputValidationError("Laya returned a non-object response")
@@ -207,7 +232,7 @@ class LayaBackend:
                 "Laya inference failed",
                 details=ErrorDetails(stage="laya-local", retryable=False),
             ) from exc
-        return decode_relevance(
+        response = decode_relevance(
             data,
             expected=tuple(candidate.candidate_id for candidate in request.candidates),
             allow_partial=request.allow_partial,
@@ -215,18 +240,28 @@ class LayaBackend:
             latency_ms=(time.perf_counter() - started) * 1000,
             requested_model=checkpoint,
         )
+        if self.context_policy == "allow_provider_truncation":
+            return replace(
+                response, metadata={**response.metadata, "context_validation": "unverified"}
+            )
+        return response
 
     async def aclose(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
+        if self._close_task is None:
+            self._closed = True
+            self._close_task = asyncio.create_task(self._finish_close())
+        await asyncio.shield(self._close_task)
+
+    async def _finish_close(self) -> None:
         executor = self._executor
-        if executor is not None:
-            await asyncio.to_thread(executor.shutdown, wait=True, cancel_futures=False)
-            self._executor = None
-        if self.router is not None:
-            await asyncio.to_thread(self.router.unload)
-            self.router = None
+        try:
+            if executor is not None:
+                await asyncio.to_thread(executor.shutdown, wait=True, cancel_futures=False)
+                self._executor = None
+        finally:
+            if self.router is not None:
+                await asyncio.to_thread(self.router.unload)
+                self.router = None
 
 
 @dataclass(slots=True)
@@ -238,13 +273,21 @@ class LayaHTTPBackend(JevBackend):
     max_batch_size: int = 16
     max_context_tokens: int = 512
     cache_revision: str | None = None
+    context_policy: Literal["strict", "allow_provider_truncation"] = "strict"
+    context_validator: Callable[[Mapping[str, Any]], None] | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
+        if self.reasoning_level is not None:
+            raise CapabilityError("Laya HTTP does not expose a reasoning-level control")
         JevBackend.__post_init__(self)
         if self.max_batch_size < 1 or self.max_context_tokens < 1:
             raise ValueError("Laya batch and context limits must be positive")
         if self.cache_revision is not None and not self.cache_revision.strip():
             raise ValueError("cache_revision cannot be empty")
+        if self.context_policy not in {"strict", "allow_provider_truncation"}:
+            raise ValueError("unknown Laya HTTP context policy")
+        if self.model not in {"auto", "english", "multilingual", "typed-decisions"}:
+            raise ValueError("unknown Laya HTTP checkpoint")
 
     @property
     def backend_id(self) -> str:
@@ -311,13 +354,28 @@ class LayaHTTPBackend(JevBackend):
             raise CapabilityError("Laya HTTP decision batch exceeds its configured limit")
         if self.estimate_context_tokens(request) > self.max_context_tokens:
             raise ContextLimitError("Laya HTTP request may exceed the checkpoint context limit")
+        if self.context_policy == "strict":
+            if self.context_validator is None:
+                raise CapabilityError(
+                    "Laya HTTP strict context mode requires a deployment validator"
+                )
+            self.context_validator(self._payload(request))
         response = await JevBackend.score(self, request)
         requested = request.checkpoint or (None if self.model == "auto" else self.model)
         routing = response.metadata.get("routing")
+        if requested is None and (
+            not isinstance(routing, Mapping)
+            or routing.get("model") not in {"english", "multilingual", "typed-decisions"}
+        ):
+            raise OutputValidationError("Laya HTTP auto mode did not identify its checkpoint")
         if requested is not None and (
             not isinstance(routing, Mapping) or routing.get("model") != requested
         ):
             raise OutputValidationError("Laya HTTP did not confirm the requested checkpoint")
+        if self.context_policy == "allow_provider_truncation":
+            return replace(
+                response, metadata={**response.metadata, "context_validation": "unverified"}
+            )
         return response
 
     def _raise_for_status(self, response: JevHttpResponse) -> None:
@@ -340,3 +398,9 @@ class LayaHTTPBackend(JevBackend):
                 details=ErrorDetails(stage="laya-http", status_code=status, retryable=True),
             )
         raise BackendError("Laya HTTP rejected the request", details=details)
+
+    def _timeout_message(self) -> str:
+        return "Laya HTTP request timed out"
+
+    def _error_stage(self) -> str:
+        return "laya-http"

@@ -32,7 +32,11 @@ class Response:
         self.headers: dict[str, str] = {}
 
     def json(self) -> dict[str, Any]:
-        return {"answers": self.answers, "usage": {"input_tokens": 1, "output_tokens": 0}}
+        return {
+            "answers": self.answers,
+            "usage": {"input_tokens": 1, "output_tokens": 0},
+            "routing": {"model": "english", "reason": "test"},
+        }
 
 
 class Transport:
@@ -65,8 +69,12 @@ def backend(kind: str, answers: dict[str, Any]) -> ModelBackend:
             api_key="test", transport=Transport(answers), retry=RetryConfig(max_attempts=1)
         )
     if kind == "laya-http":
-        return LayaHTTPBackend(transport=Transport(answers), retry=RetryConfig(max_attempts=1))
-    return LayaBackend(router=Router(answers))
+        return LayaHTTPBackend(
+            context_policy="allow_provider_truncation",
+            transport=Transport(answers),
+            retry=RetryConfig(max_attempts=1),
+        )
+    return LayaBackend(context_policy="allow_provider_truncation", router=Router(answers))
 
 
 def request(ids: tuple[str, ...] = ("a", "b")) -> ModelRequest:

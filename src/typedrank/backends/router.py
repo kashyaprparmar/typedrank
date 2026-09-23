@@ -103,7 +103,7 @@ class BackendRouter:
             return False
         if (
             context.network_policy == "deny" or context.quality_mode == "offline"
-        ) and caps.execution_location == "remote":
+        ) and caps.execution_location != "local":
             return False
         available = getattr(backend, "is_available", None)
         if callable(available) and not available():

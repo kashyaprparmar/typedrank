@@ -20,7 +20,9 @@ from ..errors import (
     BudgetUnverifiableError,
     CapabilityError,
     ConfigurationError,
+    ContextLimitError,
     DeadlineExceededError,
+    ErrorDetails,
     OutputValidationError,
     RerankError,
 )
@@ -230,15 +232,7 @@ class ExecutionServices:
         estimate = getattr(self.backend, "estimated_cost", None)
         if callable(estimate):
             return cast(Decimal | None, estimate(tokens))
-        price = getattr(self.backend, "input_price_per_million_usd", None)
-        if price is None:
-            return None
-        if hasattr(self.backend, "output_price_per_million_usd"):
-            output_price = self.backend.output_price_per_million_usd
-            if output_price is None:
-                return None
-            price = max(price, output_price)
-        return cast(Decimal, price) * Decimal(tokens) / Decimal(1_000_000)
+        return None
 
     def _model_key(
         self,
@@ -285,7 +279,7 @@ class ExecutionServices:
             if self.backend is not None:
                 if (
                     self.context.network_policy == "deny" or self.context.quality_mode == "offline"
-                ) and self.backend.capabilities.execution_location == "remote":
+                ) and self.backend.capabilities.execution_location != "local":
                     raise CapabilityError("network policy forbids a remote backend")
                 self.statistics.selected_backend = self.backend.backend_id
                 self.statistics.routing_reason = "explicit backend"
@@ -293,7 +287,9 @@ class ExecutionServices:
                 if callable(prepare):
                     setup_started = time.perf_counter()
                     try:
-                        decision = await prepare(query, self.context.language)
+                        decision = await prepare(
+                            query, self.context.language, tuple(item.text for item in candidates)
+                        )
                     finally:
                         self.statistics.backend_setup_latency_ms += (
                             time.perf_counter() - setup_started
@@ -328,7 +324,9 @@ class ExecutionServices:
                 if callable(prepare):
                     setup_started = time.perf_counter()
                     try:
-                        decision = await prepare(query, self.context.language)
+                        decision = await prepare(
+                            query, self.context.language, tuple(item.text for item in candidates)
+                        )
                     finally:
                         self.statistics.backend_setup_latency_ms += (
                             time.perf_counter() - setup_started
@@ -348,7 +346,7 @@ class ExecutionServices:
                 )
                 self._record_stage_route()
                 return outcome
-            except (BackendError, CapabilityError):
+            except (BackendError, CapabilityError, ContextLimitError):
                 if index + 1 == len(routes):
                     raise
                 self.statistics.fallbacks += 1
@@ -448,9 +446,14 @@ class ExecutionServices:
                     reasoning_level,
                 )
             ]
+        resolved_models = {response.resolved_model for response in responses}
+        if len(resolved_models) > 1:
+            raise OutputValidationError("model stage returned scores from multiple checkpoints")
         entries: list[RankingEntry] = []
         missing: list[str] = []
+        unverified_context = False
         for response in responses:
+            unverified_context |= response.metadata.get("context_validation") == "unverified"
             for score in response.scores:
                 entries.append(
                     RankingEntry(
@@ -468,8 +471,18 @@ class ExecutionServices:
                     )
                 )
             missing.extend(response.missing_candidate_ids)
-        warnings = (f"model response omitted {len(missing)} candidates",) if missing else ()
-        return RankingOutcome(tuple(entries), ScoreKind.UTILITY, bool(missing), warnings)
+        warnings = []
+        if missing:
+            warnings.append(f"model response omitted {len(missing)} candidates")
+        if unverified_context:
+            warnings.append("model context was not validated against the checkpoint tokenizer")
+        return RankingOutcome(
+            tuple(entries),
+            ScoreKind.UTILITY,
+            bool(missing or unverified_context),
+            tuple(warnings),
+            missing_count=len(missing),
+        )
 
     async def _call_model(
         self,
@@ -671,6 +684,9 @@ class ExecutionServices:
         started_call = [False]
         try:
             response = await self._run_model_request(request, mode, candidates, started_call)
+            self._validate_accounting(response)
+            if response.statistics.attempts > max_attempts:
+                raise OutputValidationError("model backend exceeded reserved attempt count")
         except BaseException as exc:
             attempts = 1 if started_call[0] else 0
             if isinstance(exc, RerankError) and exc.details.safe_context is not None:
@@ -749,7 +765,9 @@ class ExecutionServices:
                     response = await self.backend.score(request)
                 succeeded = True
             except TimeoutError as exc:
-                raise DeadlineExceededError("model call timed out") from exc
+                raise BackendError(
+                    "model call timed out", details=ErrorDetails(stage=mode, retryable=True)
+                ) from exc
             finally:
                 self.statistics.active -= 1
                 elapsed_ms = (time.perf_counter() - call_started) * 1000
@@ -824,6 +842,34 @@ class ExecutionServices:
             raise OutputValidationError("model backend returned inconsistent missing IDs")
         for score in response.scores:
             validate_utility(score.score, metric_name="model_relevance")
+
+    @staticmethod
+    def _validate_accounting(response: ModelResponse) -> None:
+        stats = response.statistics
+        usage = stats.usage
+        if (
+            isinstance(stats.attempts, bool)
+            or not isinstance(stats.attempts, int)
+            or stats.attempts < 1
+        ):
+            raise OutputValidationError("model backend returned invalid attempt count")
+        if (
+            isinstance(stats.latency_ms, bool)
+            or not isinstance(stats.latency_ms, (int, float))
+            or not math.isfinite(stats.latency_ms)
+            or stats.latency_ms < 0
+        ):
+            raise OutputValidationError("model backend returned invalid latency")
+        for value in (usage.input_tokens, usage.output_tokens):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise OutputValidationError("model backend returned invalid token usage")
+        if usage.cost_usd is not None and (
+            isinstance(usage.cost_usd, bool)
+            or not isinstance(usage.cost_usd, (int, float))
+            or not math.isfinite(usage.cost_usd)
+            or usage.cost_usd < 0
+        ):
+            raise OutputValidationError("model backend returned invalid cost usage")
 
     async def metric_scores(
         self,

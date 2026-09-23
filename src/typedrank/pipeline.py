@@ -169,7 +169,12 @@ class ModelReranker(Generic[T]):
             approximate=outcome.approximate,
         )
         return RankingOutcome(
-            outcome.entries, outcome.score_kind, outcome.approximate, outcome.warnings, (stage,)
+            outcome.entries,
+            outcome.score_kind,
+            outcome.approximate,
+            outcome.warnings,
+            (stage,),
+            outcome.missing_count,
         )
 
 
@@ -198,7 +203,12 @@ class DiversityReranker(Generic[T]):
         outcome = await mmr_select(previous, candidates, top_k=self.limit, lambda_=self.lambda_)
         stage = ExecutionStage(self.name, "mmr", len(candidates), len(outcome.entries))
         return RankingOutcome(
-            outcome.entries, outcome.score_kind, outcome.approximate, outcome.warnings, (stage,)
+            outcome.entries,
+            outcome.score_kind,
+            outcome.approximate,
+            outcome.warnings,
+            (stage,),
+            previous.missing_count,
         )
 
 
@@ -245,6 +255,7 @@ class RerankPipeline(Generic[T]):
                     outcome.approximate,
                     outcome.warnings,
                     tuple(executed),
+                    outcome.missing_count,
                 )
                 raise PipelineStageError(stage.name, checkpoint, exc) from exc
             executed.extend(outcome.stages)
@@ -252,5 +263,10 @@ class RerankPipeline(Generic[T]):
         assert outcome is not None
         entries = outcome.entries if top_k is None else outcome.entries[:top_k]
         return RankingOutcome(
-            entries, outcome.score_kind, outcome.approximate, outcome.warnings, tuple(executed)
+            entries,
+            outcome.score_kind,
+            outcome.approximate,
+            outcome.warnings,
+            tuple(executed),
+            outcome.missing_count,
         )

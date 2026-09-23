@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import uuid
 from collections.abc import Callable
 
 from ..errors import OutputValidationError
@@ -30,6 +31,7 @@ class FakeBackend(ModelBackend):
         malformed: bool = False,
     ) -> None:
         self._scores = scores or {}
+        self._cache_identity = f"fake:{uuid.uuid4().hex}"
         self.delay_s = delay_s
         self.fail = fail
         self.malformed = malformed
@@ -58,7 +60,7 @@ class FakeBackend(ModelBackend):
 
     @property
     def cache_identity(self) -> str:
-        return "fake:fake-v1"
+        return self._cache_identity
 
     async def score(self, request: ModelRequest) -> ModelResponse:
         self.calls.append(request)

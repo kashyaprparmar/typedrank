@@ -152,9 +152,11 @@ class JevBackend:
                 if not retryable or attempts >= self.retry.max_attempts:
                     if isinstance(exc, TimeoutError):
                         raise BackendError(
-                            "TypeSafe request timed out",
+                            self._timeout_message(),
                             details=ErrorDetails(
-                                stage="jev", retryable=True, safe_context={"attempts": attempts}
+                                stage=self._error_stage(),
+                                retryable=True,
+                                safe_context={"attempts": attempts},
                             ),
                         ) from exc
                     exc.details = replace(
@@ -189,6 +191,12 @@ class JevBackend:
         except OutputValidationError as exc:
             exc.details = replace(exc.details, safe_context={"attempts": attempts})
             raise
+
+    def _timeout_message(self) -> str:
+        return "TypeSafe request timed out"
+
+    def _error_stage(self) -> str:
+        return "jev"
 
     @staticmethod
     def _retry_after_seconds(headers: Mapping[str, str]) -> float | None:

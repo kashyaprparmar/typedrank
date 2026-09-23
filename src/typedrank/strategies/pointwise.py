@@ -43,7 +43,12 @@ class PointwiseStrategy:
             ordered = ordered[:top_k]
         stage = ExecutionStage(self.name, self.name, len(candidates), len(ordered))
         return RankingOutcome(
-            tuple(ordered), ScoreKind.UTILITY, outcome.approximate, outcome.warnings, (stage,)
+            tuple(ordered),
+            ScoreKind.UTILITY,
+            outcome.approximate,
+            outcome.warnings,
+            (stage,),
+            outcome.missing_count,
         )
 
 

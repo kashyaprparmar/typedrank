@@ -1,0 +1,120 @@
+{
+  "candidate_order_seed": 20260923,
+  "dataset": "typedrank-synthetic-smoke",
+  "dataset_sha256": "ab602e02b77d8e858730d27523503fea83de49672b02c9f523cf9e03736fda59",
+  "dataset_version": "1",
+  "embedding_model": null,
+  "embedding_revision": null,
+  "jev_input_price_per_million_usd": null,
+  "jev_model": null,
+  "jev_output_price_per_million_usd": null,
+  "laya_endpoint": null,
+  "laya_model": null,
+  "metrics": [
+    "ndcg@5",
+    "recall@5",
+    "mrr@5"
+  ],
+  "note": "Synthetic smoke data; quality figures do not establish real-world effectiveness.",
+  "python": "3.11.11",
+  "rows": [
+    {
+      "cache_hit_rate": null,
+      "case_latency_ms": [
+        0.17970000044442713,
+        0.16870000035851263,
+        0.08329999764100648,
+        0.08460000026389025,
+        0.07790000017848797,
+        0.07809999806340784
+      ],
+      "estimated_cost_usd": 0.0,
+      "input_tokens": 0,
+      "latency_ms": 4.327000002376735,
+      "model_calls": 0,
+      "output_tokens": 0,
+      "quality": {
+        "mrr@5": 0.8333333333333334,
+        "ndcg@5": 0.5886295615965675,
+        "recall@5": 0.5916666666666667
+      },
+      "status": "measured",
+      "strategy": "baseline_order",
+      "throughput_cases_per_s": 1386.6420144914073
+    },
+    {
+      "cache_hit_rate": null,
+      "case_latency_ms": [
+        0.32560000181547366,
+        0.23950000104377978,
+        0.21720000222558156,
+        0.21609999748761766,
+        0.20150000273133628,
+        0.2739000010478776
+      ],
+      "estimated_cost_usd": 0.0,
+      "input_tokens": 0,
+      "latency_ms": 3.7125999988347758,
+      "model_calls": 0,
+      "output_tokens": 0,
+      "quality": {
+        "mrr@5": 0.9166666666666666,
+        "ndcg@5": 0.7992095582048735,
+        "recall@5": 0.9
+      },
+      "status": "measured",
+      "strategy": "bm25",
+      "throughput_cases_per_s": 1616.1180848685935
+    },
+    {
+      "reason": "pass --embedding-model and install the embeddings extra",
+      "status": "unmeasured",
+      "strategy": "sentence_transformer"
+    },
+    {
+      "reason": "pass --embedding-model and install the embeddings extra",
+      "status": "unmeasured",
+      "strategy": "hybrid_lexical_embedding"
+    },
+    {
+      "reason": "pass --embedding-model and install the embeddings extra",
+      "status": "unmeasured",
+      "strategy": "hierarchical"
+    },
+    {
+      "reason": "pass --include-jev with TYPESAFE_API_KEY to permit billable API calls",
+      "status": "unmeasured",
+      "strategy": "jev_pointwise"
+    },
+    {
+      "reason": "pass --include-jev with TYPESAFE_API_KEY to permit billable API calls",
+      "status": "unmeasured",
+      "strategy": "jev_listwise"
+    },
+    {
+      "reason": "pass --include-laya-local and install the laya extra",
+      "status": "unmeasured",
+      "strategy": "laya_local"
+    },
+    {
+      "reason": "pass --include-laya-http with a running compatible service",
+      "status": "unmeasured",
+      "strategy": "laya_http"
+    },
+    {
+      "reason": "requires an embedding model, --include-jev, and TYPESAFE_API_KEY",
+      "status": "unmeasured",
+      "strategy": "hybrid_bm25_embedding_jev"
+    },
+    {
+      "reason": "requires an embedding model and --include-laya-local",
+      "status": "unmeasured",
+      "strategy": "hybrid_bm25_embedding_laya_local"
+    },
+    {
+      "reason": "requires an embedding model and --include-laya-http",
+      "status": "unmeasured",
+      "strategy": "hybrid_bm25_embedding_laya_http"
+    }
+  ]
+}

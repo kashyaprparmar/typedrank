@@ -58,16 +58,25 @@ class AutoStrategy:
         prompt: RerankPrompt = DEFAULT_PROMPT,
     ) -> AutoDecision:
         backend = self.backend
+        router_for_auto = backend if isinstance(backend, BackendRouter) else None
         if isinstance(backend, BackendRouter):
+            router = backend
             route_context = (
                 replace(context, network_policy="deny")
                 if context.quality_mode == "offline"
                 else context
             )
-            try:
-                backend = backend.routes("pointwise", route_context)[0].backend
-            except CapabilityError:
-                backend = None
+            preferred = (
+                "listwise"
+                if len(candidates) <= self.config.auto_small_listwise_limit
+                else "pointwise"
+            )
+            for mode in (preferred, "pointwise" if preferred == "listwise" else "listwise"):
+                try:
+                    backend = router.routes(mode, route_context)[0].backend
+                    break
+                except CapabilityError:
+                    backend = None
         if (
             backend is not None
             and (context.quality_mode == "offline" or context.network_policy == "deny")
@@ -174,6 +183,15 @@ class AutoStrategy:
             and (budget.max_tokens is None or estimated_tokens * attempts <= budget.max_tokens)
             and (available_calls is None or available_calls >= 1)
         )
+        if not listwise_fits and not backend.capabilities.pointwise and router_for_auto is not None:
+            try:
+                pointwise_backend = router_for_auto.routes("pointwise", route_context)[0].backend
+            except CapabilityError:
+                pass
+            else:
+                return replace(self, backend=pointwise_backend).decide(
+                    candidates, query=query, top_k=top_k, context=context, prompt=prompt
+                )
         if (
             count <= self.config.auto_small_listwise_limit
             and count <= max_listwise

@@ -84,6 +84,16 @@ async def test_partial_listwise_can_be_explicit() -> None:
 
 
 @pytest.mark.asyncio
+async def test_partial_coverage_precedes_top_k_selection() -> None:
+    response = await Reranker(
+        PartialBackend(), strategy=ListwiseStrategy(batch_size=3, allow_partial=True)
+    ).rerank(query="q", candidates=["a", "b", "c"], top_k=1)
+    assert len(response.results) == 1
+    assert response.coverage.scored_count == 2
+    assert response.coverage.missing_count == 1
+
+
+@pytest.mark.asyncio
 async def test_cache_deduplicates_and_prompt_change_invalidates() -> None:
     backend = FakeModelBackend(lambda _query, _text: 0.7)
     cache = MemoryCache()

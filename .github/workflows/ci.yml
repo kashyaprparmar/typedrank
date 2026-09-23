@@ -27,5 +27,6 @@ jobs:
       - run: uv run --locked pytest --cov=typedrank --cov-report=term-missing
       - run: uv run --locked ruff check .
       - run: uv run --locked ruff format --check .
-      - run: uv run --locked mypy src/typedrank
+      - run: uv run --locked mypy src/typedrank benchmarks/compare.py
       - run: uv run --locked python -m build
+      - run: uv run --locked python benchmarks/compare.py --output benchmarks/ci-smoke.json

@@ -1,6 +1,6 @@
 # TypedRank
 
-TypedRank is a typed Python reranking library for documents, search results, tools, entities, and other Python objects. Its ranking engine supports local and remote model backends through one backend contract.
+Universal typed reranking for RAG, search, agents and arbitrary Python objects.
 
 ## Install
 
@@ -20,8 +20,8 @@ The core has no runtime dependencies and does not import Torch. Jev requests use
 from typedrank import Reranker
 from typedrank.backends import JevBackend
 
-backend = JevBackend(model="jev-1.13.0")
-ranker = Reranker(backend=backend, strategy="auto")
+backend = JevBackend()
+ranker = Reranker(backend=backend)
 response = await ranker.rerank(
     query="How can I reset my password?",
     candidates=[
@@ -32,7 +32,6 @@ response = await ranker.rerank(
 )
 for result in response.results:
     print(result.rank, result.score, result.item)
-await ranker.aclose()
 await backend.aclose()
 ```
 
@@ -50,9 +49,9 @@ async with AutoReranker(backend=backend) as reranker:
 await backend.aclose()
 ```
 
-`preload=True` loads checkpoints on the first use of the backend. The default inference concurrency is one; tune `max_inference_concurrency` only after measuring your CPU or GPU. Laya is imported lazily, and normal tests use fakes rather than downloading weights. Local results leave monetary cost unknown; they do not claim that infrastructure is free.
+`preload=True` loads checkpoints on the first use of the backend. Laya 0.3.7 uses one inference worker per Router; TypedRank rejects higher concurrency values. Laya is imported lazily, and normal tests use fakes rather than downloading weights. Local results leave monetary cost unknown.
 
-For a self-hosted Laya server, use `LayaHTTPBackend(endpoint="http://localhost:8000/v1/systemone")`. Authentication is optional; pass `api_key` when the server requires a bearer token. Pass `model="english"`, `"multilingual"`, or `"typed-decisions"` to pin a checkpoint.
+For a self-hosted Laya server, use `LayaHTTPBackend(endpoint="http://localhost:8000/v1/systemone", context_policy="allow_provider_truncation")`. This explicit opt-in marks context validation unverified and results approximate; strict mode requires a deployment validator. Authentication is optional; pass `api_key` when the server requires a bearer token. Pass `model="english"`, `"multilingual"`, or `"typed-decisions"` to pin a checkpoint.
 
 To fall back from a local model to Jev, compose explicit backends:
 
@@ -83,7 +82,7 @@ response = await Reranker().rerank(
 
 TypedRank includes generic candidate preparation, pointwise and listwise strategies, metrics, BM25, embeddings, reciprocal-rank fusion, diversity selection, pipelines, budgets, caching, observability, evaluation, and Jev and Laya backends. The generic model pipeline stage is `ModelReranker`.
 
-See [architecture](TYPEDRANK_ARCHITECTURE.md), [migration plan](MIGRATION_PLAN.md), [usage guide](docs/usage.md), [integration adapters](docs/integrations.md), [evaluation](docs/evaluation.md), and [benchmarks](docs/benchmarks.md). Thresholds and synthetic benchmarks are starting points; measure ranking quality on your own held-out data.
+See [backend comparison](docs/backends.md), [Jev](docs/jev.md), [Laya](docs/laya.md), [backend routing](docs/backend-routing.md), [migration from Jev Rankkit](docs/migration-from-jev-rankkit.md), [usage guide](docs/usage.md), [integration adapters](docs/integrations.md), [evaluation](docs/evaluation.md), and [benchmarks](docs/benchmarks.md). Examples cover RAG, entities, tools, SQL schemas, memory, custom objects and metrics, hybrid pipelines, and evaluation. Thresholds and synthetic benchmarks are starting points; measure ranking quality on your own held-out data.
 
 ## Development
 

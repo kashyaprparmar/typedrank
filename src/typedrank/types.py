@@ -191,3 +191,4 @@ class RankingOutcome:
     approximate: bool = False
     warnings: tuple[str, ...] = ()
     stages: tuple[ExecutionStage, ...] = ()
+    missing_count: int = 0

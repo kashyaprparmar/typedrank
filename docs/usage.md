@@ -8,7 +8,7 @@ TypedRank reranks a candidate pool you already have. The core package needs no A
 python -m pip install typedrank
 ```
 
-For TypeSafe AI Jev scoring, install the HTTP extra:
+For the hosted Jev backend, install the HTTP extra:
 
 ```bash
 python -m pip install "typedrank[jev]"
@@ -86,7 +86,7 @@ async def best_product_for(query: str) -> Product:
 
 Use `metadata_fn` for metadata metrics and `id_fn` for caller-supplied display IDs. Candidate objects are not serialized wholesale: model requests receive the projected text, while local metrics can also use metadata you explicitly project.
 
-## Using the TypeSafe AI Jev API
+## Hosted Jev backend
 
 Create an API key in your TypeSafe AI account, then provide it to the application as the `TYPESAFE_API_KEY` environment variable. The Jev backend reads this variable when it makes a request, so do not put the key in Python source, README files, or version control. For a deployed service, use your platform's secret manager.
 
@@ -115,6 +115,7 @@ Then configure the TypeSafe model in Python. `auto` selects a bounded strategy b
 import asyncio
 
 from typedrank import Reranker
+from typedrank.backends import JevBackend
 
 
 async def main() -> None:
@@ -124,15 +125,16 @@ async def main() -> None:
         "A comparison of vector search databases",
     ]
 
-    async with Reranker(
-        model="typesafe:jev-1.13.0",
-        strategy="auto",
-    ) as reranker:
+    backend = JevBackend()
+    reranker = Reranker(backend=backend, strategy="auto")
+    try:
         response = await reranker.rerank(
             query="best database for vector search",
             candidates=candidates,
             top_k=2,
         )
+    finally:
+        await backend.aclose()
 
     for result in response.results:
         print(result.rank, result.item, result.score)
@@ -166,12 +168,17 @@ print(response.statistics.selected_backend, response.statistics.resolved_model)
 print(response.statistics.backend_latency_ms, response.statistics.fallbacks)
 await router.aclose()  # closes both configured child backends
 
-server = LayaHTTPBackend(endpoint="http://localhost:8000/v1/systemone")
+server = LayaHTTPBackend(
+    endpoint="http://localhost:8000/v1/systemone",
+    context_policy="allow_provider_truncation",
+)
 ```
 
 `BackendRouter` defaults to the declared primary. Optional `local_first`, `remote_first`, `language_aware`, `cost_aware`, and `latency_aware` policies use declared capabilities or caller-provided measurements. `quality_mode="offline"` permits a local backend and excludes remote calls. Use `network_policy="deny"` to block remote execution independently of the chosen strategy.
 
-Laya uses independent binary `noul` questions, batched up to `max_batch_size`; candidate IDs are preserved. The default context gate is conservative at 512 estimated tokens per decision and can be configured for a known checkpoint. Local Laya and automatic Laya HTTP routes are not cached by default. Declare `cache_revision` only when the model weights or server deployment are fixed; it becomes part of the cache identity but does not itself pin weights. Monetary cost remains unknown for local execution, while a strict provider-charge budget can still treat it as having no provider API charge.
+Laya uses independent binary `noul` questions, batched up to `max_batch_size`; candidate IDs are preserved. Local strict mode checks the selected checkpoint's tokenizer before inference. HTTP strict mode requires a deployment validator; the example explicitly allows provider truncation and marks results approximate. Local Laya and automatic Laya HTTP routes are not cached by default. Declare `cache_revision` only when the model weights or server deployment are fixed; it becomes part of the cache identity but does not itself pin weights. Monetary cost remains unknown for local execution, while a strict provider-charge budget can still treat it as having no provider API charge.
+
+For full setup and deployment guidance, see [Jev](jev.md), [Laya](laya.md), and [backend routing](backend-routing.md). The [backend comparison](backends.md) describes the Sentence Transformers embedding stage and its distinction from typed decision scoring.
 
 ## Rerank for RAG
 
@@ -181,6 +188,7 @@ Retrieve a manageable candidate pool first, then rerank it before building the g
 from typing import Protocol
 
 from typedrank import Reranker
+from typedrank.backends import JevBackend
 
 
 class Document(Protocol):
@@ -188,15 +196,16 @@ class Document(Protocol):
 
 
 async def select_context(query: str, retrieved_documents: list[Document]) -> str:
-    async with Reranker(
-        model="typesafe:jev-1.13.0",
-        strategy="auto",
-    ) as reranker:
+    backend = JevBackend()
+    reranker = Reranker(backend=backend, strategy="auto")
+    try:
         response = await reranker.rerank_documents(
             query=query,
             candidates=retrieved_documents,
             top_k=5,
         )
+    finally:
+        await backend.aclose()
 
     return "\n\n".join(result.item.page_content for result in response.results)
 ```

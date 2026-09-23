@@ -490,9 +490,7 @@ class Reranker:
         ]
         if top_k is not None:
             selected_entries = selected_entries[:top_k]
-        if len(outcome.entries) < len(views) and any(
-            "omitted" in warning for warning in outcome.warnings
-        ):
+        if outcome.missing_count:
             status = ResultStatus.PARTIAL
         results = tuple(
             RerankResult(
@@ -616,11 +614,7 @@ class Reranker:
                     )
                 )
             stages = tuple(enriched)
-        partial_count = (
-            max(0, stages[-1].input_count - len(outcome.entries))
-            if any("omitted" in warning for warning in outcome.warnings)
-            else 0
-        )
+        partial_count = outcome.missing_count
         pruned_count = max(0, len(views) - stages[-1].input_count)
         plan = (
             ExecutionPlan(
