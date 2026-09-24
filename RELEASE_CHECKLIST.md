@@ -30,4 +30,5 @@ No GitHub Release was created. The PyPI publication was explicitly requested and
 - [x] Bump package metadata and lock entry to `0.1.1`; add the changelog entry.
 - [x] Build sdist and wheel, pass `twine check`, and confirm the image is included in the sdist.
 - [x] Install the wheel and verify the public imports and lazy optional dependency loading.
-- [ ] Push the source update, wait for CI, and publish the 0.1.1 wheel and sdist.
+- [x] Push the source update; GitHub CI passed on Ubuntu and Windows with Python 3.11 and 3.13.
+- [x] Publish the 0.1.1 wheel and sdist to PyPI and install the published wheel in a clean environment.
