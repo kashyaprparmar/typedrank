@@ -2,6 +2,8 @@
 
 Universal typed reranking for RAG, search, agents and arbitrary Python objects.
 
+![TypedRank architecture: typed reranking connects Jev, Laya and Python search workloads](https://raw.githubusercontent.com/kashyaprparmar/typedrank/main/docs/assets/typedrank-architecture.png)
+
 ## Install
 
 ```bash

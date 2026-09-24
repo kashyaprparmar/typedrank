@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1 — architecture image
+
+- Add the TypedRank architecture graphic to the repository and README.
+
 ## 0.1.0 — initial TypedRank development baseline
 
 - Introduce the separate `typedrank` import and distribution, ported from Jev Rankkit source.

@@ -23,3 +23,11 @@
 - [ ] Optional live Jev and Laya checks remain skipped; their CI cases require provider credentials, an HTTP service, or downloading local model weights.
 
 No GitHub Release was created. The PyPI publication was explicitly requested and completed.
+
+## Version 0.1.1 image update
+
+- [x] Add the architecture image at `docs/assets/typedrank-architecture.png` and link to it from README using a URL that renders on GitHub and PyPI.
+- [x] Bump package metadata and lock entry to `0.1.1`; add the changelog entry.
+- [x] Build sdist and wheel, pass `twine check`, and confirm the image is included in the sdist.
+- [x] Install the wheel and verify the public imports and lazy optional dependency loading.
+- [ ] Push the source update, wait for CI, and publish the 0.1.1 wheel and sdist.
